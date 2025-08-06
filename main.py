@@ -9,7 +9,7 @@ import pandas as pd
 import argparse
 import os
 import sys
-
+import time
 
 @dataclass
 class Business:
@@ -71,6 +71,103 @@ def extract_coordinates_from_url(url: str) -> tuple[float, float]:
     coordinates = url.split('/@')[-1].split('/')[0]
     # return latitude, longitude
     return float(coordinates.split(',')[0]), float(coordinates.split(',')[1])
+
+
+def reset_to_search_results(page):
+    """Reset the page to show search results list view"""
+    try:
+        # Method 1: Press Escape key multiple times (most reliable)
+        print("🔄 Attempting to reset with Escape key...")
+        for i in range(3):
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(1000)
+
+        # Check if we're back to search results
+        if page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').count() > 0:
+            print("✅ Reset successful with Escape key")
+            return True
+
+        # Method 2: Try clicking visible close buttons only
+        close_selectors = [
+            "button[aria-label*='Close']",
+            "button[aria-label*='Back']",
+            "[data-value='back']",
+            "button[jsaction*='close']"
+        ]
+
+        for selector in close_selectors:
+            try:
+                elements = page.locator(selector).all()
+                for element in elements:
+                    if element.is_visible():
+                        element.click(timeout=3000)
+                        page.wait_for_timeout(2000)
+                        print(f"✅ Closed detail view using: {selector}")
+                        return True
+            except Exception:
+                continue
+
+        # Method 3: Click on the left sidebar area to get back to results
+        print("🔄 Trying to click on sidebar...")
+        try:
+            # Click on the search results sidebar
+            sidebar_selectors = [
+                "[role='main'] [role='region']",
+                ".m6QErb",  # Google Maps sidebar class
+                "[data-pane='search-overview']"
+            ]
+
+            for selector in sidebar_selectors:
+                if page.locator(selector).count() > 0:
+                    page.locator(selector).first.click()
+                    page.wait_for_timeout(2000)
+                    print(f"✅ Clicked sidebar: {selector}")
+                    return True
+        except Exception:
+            pass
+
+        # Method 4: Navigate back in browser history
+        print("🔄 Trying browser back...")
+        page.go_back()
+        page.wait_for_timeout(3000)
+
+        if page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').count() > 0:
+            print("✅ Reset successful with browser back")
+            return True
+
+        print("⚠️ All reset methods failed")
+        return False
+
+    except Exception as e:
+        print(f"⚠️ Error resetting to search results: {e}")
+        return False
+
+
+def click_overview_tab(page):
+    """Clicks the 'Overview' tab to return to main view"""
+    try:
+        # Try multiple selectors for the Overview tab
+        overview_selectors = [
+            "button[role='tab']:has-text('Overview')",
+            "button[role='tab'][aria-label*='Overview']",
+            "div[role='tab']:has-text('Overview')",
+            "//button[@role='tab' and contains(., 'Overview')]",
+            "//div[@role='tab' and contains(., 'Overview')]"
+        ]
+
+        for selector in overview_selectors:
+            if page.locator(selector).count() > 0:
+                page.locator(selector).first.click()
+                page.wait_for_timeout(2000)
+                print("✅ Clicked 'Overview' tab")
+                return True
+
+        print("⚠️ 'Overview' tab not found with any selector")
+        return False
+
+    except Exception as e:
+        print(f"⚠️ Error clicking Overview tab: {e}")
+        return False
 
 
 def main():
@@ -180,10 +277,109 @@ def main():
             business_list = BusinessList()
 
             # scraping
-            for listing in listings:
+            for index, listing in enumerate(listings):
                 try:
-                    listing.click()
-                    page.wait_for_timeout(6000)
+                    print(f"\n🏢 Processing business {index + 1}/{len(listings)}")
+
+                    # IMPORTANT: Reset page state before clicking listing (skip first)
+                    if index > 0:
+                        print("🔄 Resetting page state...")
+
+                        # Try multiple reset approaches
+                        reset_success = False
+
+                        # Approach 1: Simple Escape key
+                        try:
+                            page.keyboard.press("Escape")
+                            page.wait_for_timeout(2000)
+                            if page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').count() > 0:
+                                print("✅ Reset with Escape key")
+                                reset_success = True
+                        except:
+                            pass
+
+                        # Approach 2: Full reset function
+                        if not reset_success:
+                            reset_success = reset_to_search_results(page)
+
+                        # Approach 3: Re-search if all else fails
+                        if not reset_success:
+                            print("🔄 Performing hard reset with new search...")
+                            try:
+                                search_box = page.locator('//input[@id="searchboxinput"]')
+                                search_box.click()
+                                page.wait_for_timeout(1000)
+                                search_box.press("Control+a")
+                                search_box.type(search_for.strip())
+                                page.keyboard.press("Enter")
+                                page.wait_for_timeout(5000)
+
+                                # Re-scroll to get listings
+                                page.hover('//a[contains(@href, "https://www.google.com/maps/place")]')
+                                page.mouse.wheel(0, 5000)
+                                page.wait_for_timeout(2000)
+
+                                # Re-get listings
+                                updated_listings = page.locator(
+                                    '//a[contains(@href, "https://www.google.com/maps/place")]'
+                                ).all()[:total]
+                                listings = [listing.locator("xpath=..") for listing in updated_listings]
+                                print(f"✅ Hard reset completed, found {len(listings)} listings")
+
+                            except Exception as e:
+                                print(f"❌ Hard reset failed: {e}")
+                                continue
+
+                        # Verify we have valid listings after reset
+                        try:
+                            page.wait_for_selector('//a[contains(@href, "https://www.google.com/maps/place")]', timeout=10000)
+                            page.wait_for_timeout(1000)
+
+                            # Get fresh listings reference
+                            current_listings = page.locator(
+                                '//a[contains(@href, "https://www.google.com/maps/place")]'
+                            ).all()[:total]
+                            current_listings = [listing.locator("xpath=..") for listing in current_listings]
+
+                            if index < len(current_listings):
+                                listing = current_listings[index]
+                                print(f"✅ Updated to fresh listing reference")
+                            else:
+                                print(f"⚠️ Listing {index} no longer available, skipping")
+                                continue
+
+                        except Exception as e:
+                            print(f"⚠️ Could not get fresh listings: {e}")
+                            continue
+
+                    # Ensure the listing is visible and clickable
+                    try:
+                        page.evaluate("arguments[0].scrollIntoView({block: 'center'})", listing.element_handle())
+                        page.wait_for_timeout(1000)
+                    except:
+                        pass
+
+                    # Click the listing with retry logic
+                    click_success = False
+                    for attempt in range(3):
+                        try:
+                            listing.click(timeout=5000)
+                            page.wait_for_timeout(3000)
+
+                            # Verify we're on a business page
+                            if page.locator("//h1[contains(@class, 'DUwDvf')]").count() > 0:
+                                click_success = True
+                                break
+                            else:
+                                print(f"⚠️ Click attempt {attempt + 1} didn't open business details")
+                                page.wait_for_timeout(2000)
+                        except Exception as e:
+                            print(f"⚠️ Click attempt {attempt + 1} failed: {e}")
+                            page.wait_for_timeout(2000)
+
+                    if not click_success:
+                        print(f"❌ Failed to click listing {index + 1} after 3 attempts, skipping")
+                        continue
 
                     name_xpath = "//h1[contains(@class, 'DUwDvf')]"
                     address_xpath = '//button[@data-item-id="address"]//div[contains(@class, "fontBodyMedium")]'
@@ -191,7 +387,6 @@ def main():
                     phone_number_xpath = '//button[contains(@data-item-id, "phone:tel:")]//div[contains(@class, "fontBodyMedium")]'
                     review_count_xpath = '//button[contains(@jsaction, "reviewChart")]//span'
                     reviews_average_xpath = '//div[@jsaction="pane.reviewChart.moreReviews"]//div[@role="img"]'
-                    reviews_button_xpath = "//button[@role='tab' and (contains(., 'Reviews') or contains(@aria-label, 'Reviews for'))]"
 
                     business = Business()
 
@@ -248,23 +443,43 @@ def main():
                     business.latitude, business.longitude = extract_coordinates_from_url(page.url)
 
                     business_list.business_list.append(business)
+
+                    # Scrape reviews and images if business name exists
                     if business.name:
                         print(f"📝 Scraping reviews for: {business.name}")
-                        review_csv = scrape_reviews(page, business.name)
-                    else:
-                        print("⚠️ Cannot scrape reviews — no business name")
+                        try:
+                            review_csv = scrape_reviews(page, business.name)
+                        except Exception as e:
+                            print(f"⚠️ Error scraping reviews: {e}")
 
-                    if business.name:
+                        # Return to Overview tab after reviews
+                        click_overview_tab(page)
+                        time.sleep(2)
+
                         print(f"🖼️ Scraping images for: {business.name}")
-                        image_csv = scrape_images(page, business.name)
-                    else:
-                        print("⚠️ Cannot scrape images — no business name")
+                        try:
+                            image_csv = scrape_images(page, business.name)
+                        except Exception as e:
+                            print(f"⚠️ Error scraping images: {e}")
 
+                        # Return to Overview tab after images
+                        click_overview_tab(page)
+                        time.sleep(2)
+
+                    else:
+                        print("⚠️ Cannot scrape reviews or images — no business name")
+
+                    print(f"✅ Completed processing: {business.name or 'Unnamed Business'}")
 
                 except Exception as e:
-                    print(f'Error occured: {e}')
-
-
+                    print(f'❌ Error occurred processing listing {index + 1}: {e}')
+                    # Try to reset page state even if there was an error
+                    try:
+                        reset_to_search_results(page)
+                        page.wait_for_timeout(2000)
+                    except:
+                        pass
+                    continue
 
             #########
             # output
@@ -272,7 +487,7 @@ def main():
             business_list.save_to_excel(f"google_maps_data_{search_for}".replace(' ', '_'))
             business_list.save_to_csv(f"google_maps_data_{search_for}".replace(' ', '_'))
 
-
+        browser.close()
 
 
 if __name__ == "__main__":

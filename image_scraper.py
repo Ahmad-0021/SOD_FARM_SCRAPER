@@ -110,7 +110,7 @@ def scrape_images(page: Page, business_name: str, output_dir: str = "output/imag
             print("⚠️ No images detected, continuing anyway...")
 
         # Step 4: Advanced scrolling strategy
-        max_iterations = 200  # Increased for more thorough scraping
+        max_iterations = 20  # Increased for more thorough scraping
         iteration = 0
         consecutive_no_change = 0
         max_no_change = 15  # Increased patience

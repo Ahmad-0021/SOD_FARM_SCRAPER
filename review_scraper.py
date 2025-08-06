@@ -1,5 +1,5 @@
-# review_scraper.py
-from playwright.sync_api import Page, TimeoutError
+# review_scraper.py - EFFICIENT VERSION
+from patchright.sync_api import Page, TimeoutError
 import time
 import csv
 import os
@@ -23,21 +23,21 @@ def scrape_reviews(page: Page, business_name: str, output_dir: str = "output/rev
             return
 
         reviews_tab.click()
-        time.sleep(3)  # Increased wait time
+        time.sleep(3)
 
         # Wait for first review to appear
         try:
-            page.wait_for_selector("div.jJc9Ad", timeout=15000)  # Increased timeout
+            page.wait_for_selector("div.jJc9Ad", timeout=15000)
         except TimeoutError:
             print("⚠️ No reviews loaded")
             return
 
-        # Get the correct scroll container - try multiple possible containers
+        # Get the correct scroll container
         scrollable = None
         possible_containers = [
-            "div.m6QErb.DxyBCb.kA9KIf.dS8AEf",  # Your original
-            "div[role='main'] div[style*='overflow']",  # Alternative
-            "div.m6QErb[aria-label]",  # More specific
+            "div.m6QErb.DxyBCb.kA9KIf.dS8AEf",
+            "div[role='main'] div[style*='overflow']",
+            "div.m6QErb[aria-label]",
         ]
 
         for container_selector in possible_containers:
@@ -48,67 +48,71 @@ def scrape_reviews(page: Page, business_name: str, output_dir: str = "output/rev
 
         if scrollable is None or scrollable.count() == 0:
             print("⚠️ Could not find reviews scroll container, trying page scroll")
-            scrollable = page.locator("body")  # Fallback to page scroll
+            scrollable = page.locator("body")
 
-        # IMPROVED: More lenient conditions for getting all reviews
-        max_iterations = 100  # Increased limit
+        # OPTIMIZED: Much more efficient approach
+        processed_reviews = set()  # Track which review indices we've already processed
+        max_iterations = 10  # REDUCED from 100
         iteration = 0
         consecutive_no_change = 0
-        max_no_change = 5  # Allow more attempts without new reviews
+        max_no_change = 2  # REDUCED from 5
 
-        # Track unique reviews as we go
-        seen_reviews = set()
-        last_review_count = 0
-
-        print("🔄 Starting review collection...")
+        print("🔄 Starting efficient review collection...")
 
         while iteration < max_iterations:
             iteration += 1
-            print(f"📍 Iteration {iteration}")
 
-            # Multiple scroll attempts per iteration
-            for scroll_attempt in range(3):  # Try scrolling 3 times per iteration
-                try:
-                    # Try different scroll methods
-                    if scroll_attempt == 0:
-                        # Scroll to bottom of container
-                        scrollable.evaluate("el => el.scrollTop = el.scrollHeight")
-                    elif scroll_attempt == 1:
-                        # Scroll by viewport height
-                        scrollable.evaluate("el => el.scrollBy(0, window.innerHeight)")
-                    else:
-                        # Alternative scroll method
-                        page.keyboard.press("End")
+            # Get current review count BEFORE scrolling
+            current_review_blocks = page.locator("div.jJc9Ad").all()
+            reviews_before_scroll = len(current_review_blocks)
 
-                    time.sleep(2)  # Wait for content to load
-                except Exception as e:
-                    print(f"⚠️ Scroll attempt {scroll_attempt + 1} failed: {e}")
+            print(f"📍 Iteration {iteration}: {reviews_before_scroll} review blocks visible")
 
-            # Wait a bit more for any lazy-loaded content
-            time.sleep(1)
+            # SINGLE efficient scroll per iteration
+            try:
+                scrollable.evaluate("el => el.scrollTop = el.scrollHeight")
+                time.sleep(3)  # Wait for new content to load
+            except Exception as e:
+                print(f"⚠️ Scroll failed: {e}")
 
-            # Extract all current reviews
-            review_blocks = page.locator("div.jJc9Ad").all()
-            current_iteration_new = 0
+            # Check if new reviews loaded
+            updated_review_blocks = page.locator("div.jJc9Ad").all()
+            reviews_after_scroll = len(updated_review_blocks)
 
-            print(f"   Found {len(review_blocks)} review blocks on page")
+            if reviews_after_scroll == reviews_before_scroll:
+                consecutive_no_change += 1
+                print(f"   ⏳ No new reviews loaded ({consecutive_no_change}/{max_no_change})")
 
-            for i, block in enumerate(review_blocks):
+                if consecutive_no_change >= max_no_change:
+                    print("✅ No new reviews loading - stopping")
+                    break
+            else:
+                consecutive_no_change = 0
+                print(f"   📈 New reviews loaded: {reviews_before_scroll} → {reviews_after_scroll}")
+
+            # OPTIMIZED: Only process NEW reviews (not all reviews again)
+            new_reviews_processed = 0
+
+            for i in range(len(updated_review_blocks)):
+                # Skip if we already processed this review index
+                if i in processed_reviews:
+                    continue
+
+                block = updated_review_blocks[i]
                 try:
                     # Extract author
                     author_element = block.locator(".d4r55")
                     if author_element.count() == 0:
                         continue
-                    author = author_element.inner_text().strip()
+                    author = author_element.first.inner_text().strip()
 
                     # Extract rating
                     rating_element = block.locator(".kvMYJc")
                     rating = None
                     if rating_element.count() > 0:
-                        rating_attr = rating_element.get_attribute("aria-label") or ""
+                        rating_attr = rating_element.first.get_attribute("aria-label") or ""
                         if "star" in rating_attr.lower():
                             try:
-                                # Extract number before "star"
                                 rating_parts = rating_attr.split()
                                 for part in rating_parts:
                                     if part.replace(".", "").isdigit():
@@ -117,84 +121,103 @@ def scrape_reviews(page: Page, business_name: str, output_dir: str = "output/rev
                             except:
                                 pass
 
-                    # Extract review text - handle multiple possible selectors
-                    text = ""
-                    text_selectors = [".wiI7pd", ".MyEned", ".ZZnUNe"]  # Multiple possible text containers
-                    for text_selector in text_selectors:
-                        text_element = block.locator(text_selector)
-                        if text_element.count() > 0:
-                            text = text_element.inner_text().strip()
-                            break
+                    # Handle multiple text elements properly
+                    customer_review = ""
+                    business_response = ""
+
+                    text_elements = block.locator(".wiI7pd").all()
+
+                    if len(text_elements) >= 1:
+                        customer_review = text_elements[0].inner_text().strip()
+
+                    if len(text_elements) >= 2:
+                        business_response = text_elements[1].inner_text().strip()
+
+                    # Fallback for review text
+                    if not customer_review:
+                        fallback_selectors = [".MyEned", ".ZZnUNe", "span.wiI7pd"]
+                        for text_selector in fallback_selectors:
+                            text_element = block.locator(text_selector)
+                            if text_element.count() > 0:
+                                customer_review = text_element.first.inner_text().strip()
+                                break
 
                     # Extract date
                     date_element = block.locator(".rsqaWe")
                     date = ""
                     if date_element.count() > 0:
-                        date = date_element.inner_text().strip()
+                        date = date_element.first.inner_text().strip()
 
-                    # Create unique key - use author + date + first 100 chars of text
-                    review_key = (author, date, text[:100] if text else "")
-
-                    if review_key not in seen_reviews and author:  # Must have author
-                        seen_reviews.add(review_key)
+                    # Add review if we have meaningful data
+                    if author and customer_review:
                         reviews_data.append({
                             "reviewer_name": author,
                             "rating": rating,
-                            "review_text": text,
+                            "customer_review": customer_review,
+                            "business_response": business_response,
                             "date": date
                         })
-                        current_iteration_new += 1
+
+                        processed_reviews.add(i)  # Mark this review index as processed
+                        new_reviews_processed += 1
 
                 except Exception as e:
                     print(f"   ⚠️ Error processing review {i + 1}: {e}")
                     continue
 
-            current_total = len(reviews_data)
-            print(f"   📊 Total reviews: {current_total} (+{current_iteration_new} new)")
+            print(f"   ✅ Processed {new_reviews_processed} new reviews (Total: {len(reviews_data)})")
 
-            # Check for stopping conditions
-            if current_total == last_review_count:
-                consecutive_no_change += 1
-                print(f"   ⏳ No new reviews ({consecutive_no_change}/{max_no_change})")
-
-                if consecutive_no_change >= max_no_change:
-                    print("✅ No new reviews found after multiple attempts - likely reached end")
-                    break
-            else:
-                consecutive_no_change = 0  # Reset counter
-                last_review_count = current_total
-
-            # Optional: Stop if we have a very large number
-            if current_total > 2000:
-                print(f"✅ Collected {current_total} reviews - stopping to prevent excessive data")
+            # Safety limit
+            if len(reviews_data) > 1000:
+                print(f"✅ Collected {len(reviews_data)} reviews - reasonable limit reached")
                 break
 
         print(f"\n🎯 Scraping completed after {iteration} iterations")
-        print(f"📝 Total unique reviews collected: {len(reviews_data)}")
+        print(f"📝 Total reviews collected: {len(reviews_data)}")
 
-        # Final deduplication (extra safety)
+        # Final deduplication based on content (not just index)
         final_seen = set()
         unique_reviews = []
+
         for r in reviews_data:
-            key = (r["reviewer_name"], r["date"], r["review_text"][:100])
-            if key not in final_seen:
-                final_seen.add(key)
+            # Create unique key from reviewer name + review text
+            review_key = (r["reviewer_name"], r["customer_review"][:100], r["date"])
+
+            if review_key not in final_seen:
+                final_seen.add(review_key)
                 unique_reviews.append(r)
+
+        print(f"📋 After deduplication: {len(unique_reviews)} unique reviews")
 
         # Save to CSV
         if unique_reviews:
             with open(filename, 'w', encoding='utf-8', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=["reviewer_name", "rating", "review_text", "date"])
+                fieldnames = ["reviewer_name", "rating", "customer_review", "business_response", "date"]
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(unique_reviews)
             print(f"✅ Saved {len(unique_reviews)} unique reviews to {filename}")
 
+            # Show rating distribution
+            rating_counts = {}
+            for review in unique_reviews:
+                rating = review["rating"] or "No rating"
+                rating_counts[rating] = rating_counts.get(rating, 0) + 1
+
+            print("\n⭐ Rating Distribution:")
+            for rating, count in sorted(rating_counts.items(), reverse=True):
+                print(f"   {rating}: {count} reviews")
+
             # Print sample of what was collected
             print("\n📋 Sample reviews:")
             for i, review in enumerate(unique_reviews[:3]):
-                text_preview = review["review_text"][:100] + "..." if len(review["review_text"]) > 100 else review[
-                    "review_text"]
+                text_preview = review["customer_review"][:100] + "..." if len(review["customer_review"]) > 100 else \
+                review["customer_review"]
                 print(f"   {i + 1}. {review['reviewer_name']} ({review['rating']} stars): {text_preview}")
+                if review["business_response"]:
+                    response_preview = review["business_response"][:80] + "..." if len(
+                        review["business_response"]) > 80 else review["business_response"]
+                    print(f"      Business replied: {response_preview}")
 
         else:
             print("❌ No reviews extracted")
