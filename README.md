@@ -35,5 +35,5 @@ Copy
 Edit
 python main.py -s "restaurants in New York" -t 10
 Argument	Description
--s / --search	Search term (e.g., "hotels in London")
+-s / --search	Search term (e.g., "sod farms in texas")
 -t / --total	Maximum number of listings to scrape
