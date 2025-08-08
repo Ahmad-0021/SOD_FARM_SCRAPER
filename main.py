@@ -1,7 +1,7 @@
 """This script serves as an example on how to use Python
    & Playwright to scrape/extract data from Google Maps"""
-
-from patchright.sync_api import sync_playwright
+from dotenv import load_dotenv
+from patchright.sync_api import sync_playwright, ProxySettings
 from dataclasses import dataclass, asdict, field
 from review_scraper import scrape_reviews
 from image_scraper import scrape_images
@@ -11,6 +11,13 @@ import os
 import sys
 import time
 
+load_dotenv()
+
+PROXY: ProxySettings = {
+    "server": f"http://{os.getenv('PROXY_HOST')}:{os.getenv('PROXY_PORT')}",
+    "username": os.getenv("PROXY_USERNAME"),
+    "password": os.getenv("PROXY_PASSWORD")
+}
 @dataclass
 class Business:
     """holds business data"""
@@ -294,7 +301,7 @@ def main():
     # scraping
     ###########
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=False,proxy=PROXY)
         page = browser.new_page()
 
         page.goto("https://www.google.com/maps", timeout=60000)

@@ -1,5 +1,5 @@
 # image_scraper_ultra_fast.py
-from playwright.sync_api import Page, TimeoutError
+from patchright.sync_api import Page, TimeoutError
 import time
 import csv
 import os
