@@ -225,7 +225,7 @@ def ultra_fast_scroll_and_extract(page: Page) -> list:
         try:
             page.evaluate("window.scrollBy(0, 1500)")
             active_container.evaluate("el => el.scrollBy(0, 1000)")
-            time.sleep(0.5)  # Minimal wait
+            time.sleep(1)  # Minimal wait
         except:
             pass
 
@@ -290,7 +290,7 @@ def scrape_images(page: Page, business_name: str, output_dir: str = "output/imag
             try:
                 photos_button.click()
                 print("📸 Clicked photos button")
-                time.sleep(1.5)  # Minimal wait
+                time.sleep(2)  # Minimal wait
             except Exception as e:
                 print(f"⚠️ Could not click photos button: {e}")
 
@@ -300,7 +300,7 @@ def scrape_images(page: Page, business_name: str, output_dir: str = "output/imag
 
         for selector in wait_selectors:
             try:
-                page.wait_for_selector(selector, timeout=1500)  # Very short timeout
+                page.wait_for_selector(selector, timeout=2000)  # Very short timeout
                 images_loaded = True
                 print(f"✅ Images detected: {selector}")
                 break

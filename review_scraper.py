@@ -128,7 +128,7 @@ def ultra_fast_scroll_and_extract_reviews(page: Page, scrollable) -> list:
         # Fast aggressive scroll
         try:
             scrollable.evaluate("el => el.scrollTop = el.scrollHeight")
-            time.sleep(1.5)  # Minimal wait for reviews to load
+            time.sleep(2)  # Minimal wait for reviews to load
         except Exception as e:
             print(f"   ⚠️ Scroll failed: {e}")
             time.sleep(0.5)
@@ -182,11 +182,11 @@ def scrape_reviews(page: Page, business_name: str, output_dir: str = "output/rev
             return filename
 
         reviews_tab.click()
-        time.sleep(2)  # Reduced wait time
+        time.sleep(3)  # Reduced wait time
 
         # Step 2: Quick wait for first review
         try:
-            page.wait_for_selector("div.jJc9Ad", timeout=10000)  # Reduced timeout
+            page.wait_for_selector("div.jJc9Ad", timeout=12000)  # Reduced timeout
             print("✅ Reviews loaded")
         except TimeoutError:
             print("⚠️ No reviews loaded")
