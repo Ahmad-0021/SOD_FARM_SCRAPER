@@ -1,16 +1,16 @@
-"""This script scrapes all sod farms from every US state using Google Maps - OPTIMIZED URL-BASED VERSION"""
+"""This script scrapes all sod farms from every city in every US state using Google Maps - CITY-WISE OPTIMIZED VERSION"""
 from dotenv import load_dotenv
 from patchright.sync_api import sync_playwright, ProxySettings
 from dataclasses import dataclass, asdict, field
 from review_scraper import scrape_reviews
 from image_scraper import scrape_images
+from cities_data import US_CITIES_BY_STATE, US_STATES  # Import from separate file
 import pandas as pd
 import argparse
 import os
 import time
 import random
 import re
-from urllib.parse import urlparse, parse_qs
 
 load_dotenv()
 
@@ -19,17 +19,6 @@ PROXY: ProxySettings = {
     "username": os.getenv("PROXY_USERNAME"),
     "password": os.getenv("PROXY_PASSWORD")
 }
-
-# US States list for comprehensive scraping
-US_STATES = [
-    "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware",
-    "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky",
-    "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi",
-    "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico",
-    "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania",
-    "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont",
-    "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming"
-]
 
 @dataclass
 class Business:
@@ -43,7 +32,9 @@ class Business:
     latitude: float = None
     longitude: float = None
     state: str = None
-    google_maps_url: str = None  # Store the original Google Maps URL
+    city: str = None  # Added city field
+    google_maps_url: str = None
+    category:str = None
 
 @dataclass
 class BusinessList:
@@ -77,26 +68,38 @@ def extract_coordinates_from_url(url: str) -> tuple[float, float]:
     except:
         return None, None
 
-def enhanced_scroll_to_load_all_results(page, max_attempts=30):
+
+def extract_categories_from_url(url: str) -> str:
+    """Extract business category based on URL content"""
+    try:
+        url_lower = url.lower()
+
+        # Check for specific keywords in URL
+        if "sod" in url_lower or "turf" in url_lower:
+            return "sod supplier"
+        elif "grass" in url_lower:
+            return "grass store"
+        elif "landscape" in url_lower or "landscaping" in url_lower:
+            return "landscape supplier"
+        elif "nursery" in url_lower:
+            return "nursery"
+        elif "garden" in url_lower:
+            return "garden center"
+        else:
+            return "others"
+    except Exception as e:
+        print(f"⚠️ Error extracting category: {e}")
+        return "unknown"
+
+def enhanced_scroll_to_load_all_results(page, max_attempts=25):
     """ULTRA-ENHANCED SCROLLING LOGIC - Loads ALL available results"""
-    print("🔄 Starting ultra-enhanced scrolling to load ALL results...")
+    print("🔄 Starting enhanced scrolling to load ALL results...")
 
     # Wait for initial results to load
     page.wait_for_timeout(3000)
 
-    # More aggressive scrolling strategies
-    scroll_strategies = [
-        {"method": "wheel", "distance": 5000, "wait": 2000},
-        {"method": "wheel", "distance": 8000, "wait": 2500},
-        {"method": "wheel", "distance": 12000, "wait": 3000},
-        {"method": "key", "key": "PageDown", "wait": 1800},
-        {"method": "wheel", "distance": 15000, "wait": 4000},
-        {"method": "end_key", "wait": 2500},
-    ]
-
     consecutive_same_count = 0
     previous_count = 0
-    strategy_index = 0
     no_progress_cycles = 0
     max_consecutive_before_strategy_change = 2
 
@@ -113,9 +116,9 @@ def enhanced_scroll_to_load_all_results(page, max_attempts=30):
             print(f"📊 Attempt {attempt + 1}: Found {current_count} listings")
 
             # Check if we found any results at all
-            if current_count == 0 and attempt < 5:
+            if current_count == 0 and attempt < 3:
                 print("⚠️ No listings found yet, waiting longer...")
-                page.wait_for_timeout(5000)
+                page.wait_for_timeout(3000)
                 continue
 
             # Track highest count
@@ -136,165 +139,77 @@ def enhanced_scroll_to_load_all_results(page, max_attempts=30):
 
             previous_count = current_count
 
-            # Advanced strategy switching
+            # Strategy switching for stuck situations
             if consecutive_same_count >= max_consecutive_before_strategy_change:
                 print("🎯 Trying alternative scrolling strategies...")
 
-                # Strategy 1: Rapid small scrolls with hover
                 if no_progress_cycles == 0:
-                    print("📜 Strategy 1: Rapid small scrolls + hover")
-                    try:
-                        if current_count > 0:
-                            current_listings.first.hover()
-                            page.wait_for_timeout(1000)
+                    # Strategy 1: Rapid small scrolls
+                    print("📜 Strategy 1: Rapid small scrolls")
+                    for i in range(6):
+                        page.mouse.wheel(0, 2000)
+                        page.wait_for_timeout(800)
 
-                        for i in range(8):
-                            page.mouse.wheel(0, 2500)
-                            page.wait_for_timeout(800)
-                    except:
-                        page.mouse.wheel(0, 15000)
-                        page.wait_for_timeout(3000)
-
-                # Strategy 2: Large scroll + show more buttons
                 elif no_progress_cycles == 1:
-                    print("📜 Strategy 2: Large scroll + show more buttons")
-                    try:
-                        page.mouse.wheel(0, 25000)
-                        page.wait_for_timeout(4000)
+                    # Strategy 2: Large scroll + wait
+                    print("📜 Strategy 2: Large scroll")
+                    page.mouse.wheel(0, 15000)
+                    page.wait_for_timeout(4000)
 
-                        # Look for "Show more results" buttons
-                        show_more_selectors = [
-                            "//button[contains(text(), 'Show more')]",
-                            "//button[contains(text(), 'More results')]",
-                            "//button[contains(text(), 'Load more')]",
-                            "[data-value='Show more results']"
-                        ]
-
-                        for selector in show_more_selectors:
-                            if page.locator(selector).count() > 0:
-                                print("🔘 Found 'Show more' button, clicking...")
-                                page.locator(selector).first.click()
-                                page.wait_for_timeout(5000)
-                                break
-
-                    except Exception as e:
-                        print(f"⚠️ Strategy 2 error: {e}")
-                        page.mouse.wheel(0, 15000)
-                        page.wait_for_timeout(3000)
-
-                # Strategy 3: Keyboard navigation with End key
                 elif no_progress_cycles == 2:
-                    print("📜 Strategy 3: Keyboard End key navigation")
+                    # Strategy 3: End key navigation
+                    print("📜 Strategy 3: End key navigation")
                     try:
-                        if current_count > 0:
-                            current_listings.first.click()
-                            page.wait_for_timeout(1000)
-
-                        for i in range(5):
+                        for i in range(3):
                             page.keyboard.press("End")
                             page.wait_for_timeout(1500)
-                            page.keyboard.press("PageDown")
-                            page.wait_for_timeout(1500)
                     except:
-                        page.mouse.wheel(0, 20000)
-                        page.wait_for_timeout(4000)
+                        page.mouse.wheel(0, 10000)
+                        page.wait_for_timeout(3000)
 
-                # Strategy 4: Multi-listing hover + scroll
-                elif no_progress_cycles == 3:
-                    print("📜 Strategy 4: Multi-listing hover + scroll")
-                    try:
-                        if current_count > 0:
-                            visible_listings = current_listings.all()[:min(5, current_count)]
-                            for i, listing in enumerate(visible_listings):
-                                try:
-                                    listing.hover()
-                                    page.wait_for_timeout(500)
-                                    page.mouse.wheel(0, 4000 + (i * 1000))
-                                    page.wait_for_timeout(1200)
-                                except:
-                                    continue
-                    except:
-                        page.mouse.wheel(0, 18000)
-                        page.wait_for_timeout(4000)
-
-                # Strategy 5: Aggressive continuous scrolling
-                elif no_progress_cycles == 4:
-                    print("📜 Strategy 5: Aggressive continuous scroll")
-                    for i in range(10):
-                        scroll_distance = 3000 + (i * 500)
-                        page.mouse.wheel(0, scroll_distance)
+                else:
+                    # Strategy 4: Final aggressive scroll
+                    print("📜 Strategy 4: Final aggressive scroll")
+                    for i in range(5):
+                        page.mouse.wheel(0, 5000 + (i * 1000))
                         page.wait_for_timeout(1000)
-
-                        temp_count = page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').count()
-                        if temp_count > current_count:
-                            print(f"🎉 Mid-scroll progress detected: {temp_count} listings")
-                            break
 
                 no_progress_cycles += 1
                 consecutive_same_count = 0
 
-                if no_progress_cycles >= 6:
-                    print("🏁 All advanced scrolling strategies exhausted")
+                if no_progress_cycles >= 4:
+                    print("🏁 All scrolling strategies exhausted")
                     break
 
             else:
                 # Normal scrolling when making progress
-                current_strategy = scroll_strategies[strategy_index % len(scroll_strategies)]
+                scroll_distance = 4000 + random.randint(-1000, 2000)
+                page.mouse.wheel(0, scroll_distance)
+                page.wait_for_timeout(2000 + random.randint(-300, 800))
 
-                if current_strategy["method"] == "wheel":
-                    distance = current_strategy["distance"] + random.randint(-1000, 2000)
-                    page.mouse.wheel(0, distance)
-
-                elif current_strategy["method"] == "key":
-                    for _ in range(4):
-                        page.keyboard.press(current_strategy["key"])
-                        page.wait_for_timeout(600)
-
-                elif current_strategy["method"] == "end_key":
-                    try:
-                        page.keyboard.press("End")
-                        page.wait_for_timeout(current_strategy["wait"])
-                    except:
-                        page.mouse.wheel(0, 15000)
-                        page.wait_for_timeout(3000)
-
-                strategy_index += 1
-                wait_time = current_strategy["wait"] + random.randint(-300, 800)
-                page.wait_for_timeout(wait_time)
-
-            # Exit condition
-            if attempts_since_highest >= 8 and current_count > 10:
+            # Exit condition - for city searches, be less aggressive
+            if attempts_since_highest >= 6 and current_count > 5:
                 print(f"🎯 Stopping: No progress for {attempts_since_highest} attempts since highest count ({highest_count_seen})")
                 break
 
         except Exception as e:
             print(f"⚠️ Error during scrolling attempt {attempt + 1}: {e}")
             try:
-                page.mouse.wheel(0, 15000)
-                page.wait_for_timeout(4000)
+                page.mouse.wheel(0, 10000)
+                page.wait_for_timeout(3000)
             except:
                 pass
             continue
 
-    # Final scroll attempt
-    print("🔄 Final aggressive scroll attempt...")
-    try:
-        for i in range(5):
-            page.mouse.wheel(0, 8000)
-            page.wait_for_timeout(2000)
-        page.wait_for_timeout(3000)
-    except:
-        pass
-
     # Final count
     final_count = page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').count()
-    print(f"✅ Ultra-enhanced scrolling completed: {final_count} total listings found")
+    print(f"✅ Enhanced scrolling completed: {final_count} total listings found")
 
     return final_count
 
 def extract_all_business_urls(page):
     """Extract all Google Maps business URLs from the current search results"""
-    print("🔗 STEP 2: Extracting all business URLs...")
+    print("🔗 Extracting all business URLs...")
 
     try:
         # Get all Google Maps place URLs
@@ -325,14 +240,15 @@ def extract_all_business_urls(page):
         print(f"❌ Error extracting business URLs: {e}")
         return []
 
-def scrape_business_from_url(page, url, state_name, business_index, total_count):
+
+def  scrape_business_from_url(page, url, state_name, city_name, business_index, total_count):
     """Scrape a single business by navigating directly to its URL"""
     try:
-        print(f"🏢 Processing business {business_index + 1}/{total_count} from {state_name}")
+        print(f"🏢 Processing business {business_index + 1}/{total_count} from {city_name}, {state_name}")
 
         # Navigate directly to the business URL
         page.goto(url, timeout=30000)
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(2500)
 
         # Verify we're on a business page
         if page.locator("//h1[contains(@class, 'DUwDvf')]").count() == 0:
@@ -349,6 +265,7 @@ def scrape_business_from_url(page, url, state_name, business_index, total_count)
 
         business = Business()
         business.state = state_name
+        business.city = city_name
         business.google_maps_url = url
 
         # Extract business information
@@ -410,6 +327,14 @@ def scrape_business_from_url(page, url, state_name, business_index, total_count)
             business.latitude = ""
             business.longitude = ""
 
+        # Extract and assign category - FIXED VERSION
+        try:
+            business.category = extract_categories_from_url(page.url)
+            print(f"📋 Category assigned: {business.category}")
+        except Exception as e:
+            print(f"⚠️ Error extracting category: {e}")
+            business.category = "unknown"
+
         # Scrape reviews and images if business name exists
         if business.name:
             print(f"📝 Scraping reviews for: {business.name}")
@@ -432,7 +357,8 @@ def scrape_business_from_url(page, url, state_name, business_index, total_count)
         else:
             print("⚠️ Cannot scrape reviews or images — no business name")
 
-        print(f"✅ Completed: {business.name or 'Unnamed Business'} ({business_index + 1}/{total_count}) [{state_name}]")
+        print(
+            f"✅ Completed: {business.name or 'Unnamed Business'} ({business_index + 1}/{total_count}) [{city_name}, {state_name}] - Category: {business.category}")
         return business
 
     except Exception as e:
@@ -471,103 +397,126 @@ def click_overview_tab(page):
         print(f"⚠️ Error clicking Overview tab: {e}")
         return False
 
-def scrape_state_sod_farms_optimized(page, state_name, all_business_list):
-    """OPTIMIZED: Scrape all sod farms from a specific state using URL-based approach"""
-    search_term = f"sod farms in {state_name}"
-    print(f"\n🏛️ ===========================================")
-    print(f"🏛️ SCRAPING SOD FARMS IN {state_name.upper()}")
-    print(f"🏛️ ===========================================")
+def scrape_city_sod_farms_optimized(page, state_name, city_name, all_business_list, all_scraped_urls):
+    """OPTIMIZED: Scrape all sod farms from a specific city using URL-based approach"""
+    search_term = f"sod farms in {city_name}, {state_name}"
+    print(f"\n🏙️ ===========================================")
+    print(f"🏙️ SCRAPING SOD FARMS IN {city_name.upper()}, {state_name.upper()}")
+    print(f"🏙️ ===========================================")
 
     try:
-        # Search for sod farms in the state
+        # Search for sod farms in the city
         search_box = page.locator('//input[@id="searchboxinput"]')
         search_box.click()
         page.wait_for_timeout(1000)
         search_box.press("Control+a")
         search_box.fill(search_term)
         page.keyboard.press("Enter")
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(4000)
 
         # Check if there are any results
         if page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').count() == 0:
-            print(f"⚠️ No sod farms found in {state_name}")
-            return
+            print(f"⚠️ No sod farms found in {city_name}, {state_name}")
+            return 0
 
         print("📜 STEP 1: Loading all results with enhanced scrolling...")
         # STEP 1: Use enhanced scrolling to load ALL results (once)
         total_count = enhanced_scroll_to_load_all_results(page)
 
         if total_count == 0:
-            print(f"⚠️ No sod farms loaded for {state_name}")
-            return
+            print(f"⚠️ No sod farms loaded for {city_name}, {state_name}")
+            return 0
 
-        print(f"✅ Step 1 Complete: {total_count} sod farms found in {state_name}")
+        print(f"✅ Step 1 Complete: {total_count} sod farms found in {city_name}, {state_name}")
 
         # STEP 2: Extract all business URLs (once)
         business_urls = extract_all_business_urls(page)
 
         if not business_urls:
-            print(f"⚠️ No business URLs extracted for {state_name}")
-            return
+            print(f"⚠️ No business URLs extracted for {city_name}, {state_name}")
+            return 0
 
-        print(f"✅ Step 2 Complete: {len(business_urls)} business URLs extracted")
+        # Filter out already scraped URLs to avoid duplicates
+        new_urls = []
+        for url in business_urls:
+            if url not in all_scraped_urls:
+                new_urls.append(url)
+                all_scraped_urls.add(url)
+            else:
+                print(f"🔄 Skipping duplicate URL: {url}")
+
+        if not new_urls:
+            print(f"⚠️ All URLs from {city_name}, {state_name} were already scraped")
+            return 0
+
+        print(f"✅ Step 2 Complete: {len(new_urls)} new business URLs extracted (filtered {len(business_urls) - len(new_urls)} duplicates)")
 
         print("🚀 STEP 3: Scraping businesses directly from URLs...")
-        print("⚡ Using optimized URL-based approach (no more resets/re-scrolling!)")
 
         # STEP 3: Loop through URLs and scrape each business directly
-        state_scraped_count = 0
+        city_scraped_count = 0
         successful_businesses = []
 
-        for index, url in enumerate(business_urls):
+        for index, url in enumerate(new_urls):
             try:
-                business = scrape_business_from_url(page, url, state_name, index, len(business_urls))
+                business = scrape_business_from_url(page, url, state_name, city_name, index, len(new_urls))
 
                 if business:
                     all_business_list.business_list.append(business)
                     successful_businesses.append(business)
-                    state_scraped_count += 1
+                    city_scraped_count += 1
                 else:
                     print(f"⚠️ Failed to scrape business {index + 1}")
 
             except Exception as e:
-                print(f'❌ Error processing URL {index + 1} in {state_name}: {e}')
+                print(f'❌ Error processing URL {index + 1} in {city_name}, {state_name}: {e}')
                 continue
 
-        print(f"🎉 Completed {state_name}: {state_scraped_count}/{len(business_urls)} sod farms scraped successfully")
-        print(f"📊 Success rate: {(state_scraped_count/len(business_urls))*100:.1f}%")
+        print(f"🎉 Completed {city_name}, {state_name}: {city_scraped_count}/{len(new_urls)} sod farms scraped successfully")
 
-        if state_scraped_count < len(business_urls):
-            missed_count = len(business_urls) - state_scraped_count
-            print(f"⚠️ Missed {missed_count} listings due to errors")
+        if len(new_urls) > 0:
+            print(f"📊 Success rate: {(city_scraped_count/len(new_urls))*100:.1f}%")
+
+        return city_scraped_count
 
     except Exception as e:
-        print(f"❌ Error scraping {state_name}: {e}")
+        print(f"❌ Error scraping {city_name}, {state_name}: {e}")
+        return 0
 
 def main():
-    parser = argparse.ArgumentParser(description="Scrape sod farms from all US states - OPTIMIZED VERSION")
-    parser.add_argument("-s", "--search", type=str, help="Custom search term (optional, will scrape all states if not provided)")
-    parser.add_argument("--states", nargs="+", help="Specific states to scrape (optional, will scrape all states if not provided)")
-    parser.add_argument("--use-old-method", action="store_true", help="Use old click-based method instead of optimized URL method")
+    parser = argparse.ArgumentParser(description="Scrape sod farms from all cities in all US states - CITY-WISE OPTIMIZED VERSION")
+    parser.add_argument("-s", "--search", type=str, help="Custom search term (optional)")
+    parser.add_argument("--states", nargs="+", help="Specific states to scrape (optional)")
+    parser.add_argument("--cities", nargs="+", help="Specific cities to scrape (requires --state)")
+    parser.add_argument("--state", type=str, help="State for specific cities (used with --cities)")
+    parser.add_argument("--max-cities-per-state", type=int, default=None, help="Maximum cities to scrape per state")
     args = parser.parse_args()
+
+    # Validation for city-specific searches
+    if args.cities and not args.state:
+        print("❌ Error: --cities requires --state to be specified")
+        return
 
     # Determine what to scrape
     if args.search:
-        search_list = [args.search]
         print(f"🎯 Custom search mode: '{args.search}'")
+        print("⚠️ Note: Custom search will use legacy method, not city-wise optimization")
+    elif args.cities and args.state:
+        if args.state not in US_CITIES_BY_STATE:
+            print(f"❌ Error: State '{args.state}' not found in city database")
+            return
+        print(f"🏙️ Specific cities mode: {', '.join(args.cities)} in {args.state}")
     elif args.states:
-        search_list = [f"sod farms in {state}" for state in args.states]
         print(f"🏛️ Specific states mode: {', '.join(args.states)}")
+        if args.max_cities_per_state:
+            print(f"📊 Limited to {args.max_cities_per_state} cities per state")
     else:
-        search_list = [f"sod farms in {state}" for state in US_STATES]
-        print(f"🇺🇸 Full USA mode: All {len(US_STATES)} states")
+        print(f"🇺🇸 Full USA city-wise mode: All cities in all {len(US_CITIES_BY_STATE)} states")
+        if args.max_cities_per_state:
+            print(f"📊 Limited to {args.max_cities_per_state} cities per state")
 
-    # Show optimization status
-    if not args.use_old_method and not args.search:
-        print("🚀 Using OPTIMIZED URL-based scraping method!")
-        print("⚡ This will be much faster than the old click-and-reset method!")
-    elif args.use_old_method:
-        print("🐌 Using legacy click-based method (slower)")
+    print("🚀 Using CITY-WISE OPTIMIZED URL-based scraping method!")
+    print("⚡ This will provide maximum coverage by searching each city individually!")
 
     ###########
     # scraping
@@ -579,71 +528,168 @@ def main():
         page.goto("https://www.google.com/maps", timeout=60000)
         page.wait_for_timeout(5000)
 
-        # Initialize master business list for all states
+        # Initialize master business list for all cities
         master_business_list = BusinessList()
+        all_scraped_urls = set()  # Track scraped URLs to avoid duplicates
 
         if args.search:
-            # Handle custom search (legacy behavior for now)
+            # Handle custom search (legacy behavior)
             print("Custom search logic - using traditional method")
-            # Could implement URL-based optimization here too if needed
+            # Custom search implementation would go here
+            print("⚠️ Custom search mode not implemented in this city-wise version")
+
         else:
-            # New optimized state-by-state scraping
-            states_to_scrape = args.states if args.states else US_STATES
+            # New city-wise scraping
+            if args.cities and args.state:
+                # Scrape specific cities in specific state
+                states_to_scrape = {args.state: tuple(args.cities)}
+            elif args.states:
+                # Scrape specific states
+                states_to_scrape = {}
+                for state in args.states:
+                    if state in US_CITIES_BY_STATE:
+                        cities = US_CITIES_BY_STATE[state]
+                        if args.max_cities_per_state:
+                            cities = cities[:args.max_cities_per_state]
+                        states_to_scrape[state] = cities
+                    else:
+                        print(f"⚠️ Warning: State '{state}' not found in city database")
+            else:
+                # Scrape all states and cities
+                states_to_scrape = {}
+                for state, cities in US_CITIES_BY_STATE.items():
+                    if args.max_cities_per_state:
+                        cities = cities[:args.max_cities_per_state]
+                    states_to_scrape[state] = cities
 
             start_time = time.time()
+            total_states = len(states_to_scrape)
+            total_cities = sum(len(cities) for cities in states_to_scrape.values())
+            total_scraped_businesses = 0
 
-            for state_index, state_name in enumerate(states_to_scrape):
-                print(f"\n{'='*60}")
-                print(f"🏛️ STATE {state_index + 1}/{len(states_to_scrape)}: {state_name.upper()}")
-                print(f"{'='*60}")
+            print(f"\n🌟 STARTING CITY-WISE SCRAPING:")
+            print(f"📊 Total states to process: {total_states}")
+            print(f"🏙️ Total cities to process: {total_cities}")
+            print(f"{'='*80}")
+
+            state_index = 0
+            city_global_index = 0
+
+            for state_name, cities in states_to_scrape.items():
+                state_index += 1
+                print(f"\n{'='*80}")
+                print(f"🏛️ STATE {state_index}/{total_states}: {state_name.upper()}")
+                print(f"🏙️ Cities to process in {state_name}: {len(cities)}")
+                print(f"{'='*80}")
 
                 state_start_time = time.time()
+                state_scraped_businesses = 0
 
-                # Use optimized method by default, fall back to old if requested
-                if args.use_old_method:
-                    print("🐌 Using legacy method...")
-                    # scrape_state_sod_farms(page, state_name, master_business_list)  # Old method
-                    print("Legacy method not implemented in this optimized version")
-                else:
-                    scrape_state_sod_farms_optimized(page, state_name, master_business_list)
+                for city_index, city_name in enumerate(cities):
+                    city_global_index += 1
+                    print(f"\n🏙️ CITY {city_index + 1}/{len(cities)} in {state_name} (Global: {city_global_index}/{total_cities})")
+
+                    city_start_time = time.time()
+
+                    # Scrape this specific city
+                    city_scraped_count = scrape_city_sod_farms_optimized(
+                        page, state_name, city_name, master_business_list, all_scraped_urls
+                    )
+
+                    state_scraped_businesses += city_scraped_count
+                    total_scraped_businesses += city_scraped_count
+
+                    city_end_time = time.time()
+                    city_duration = city_end_time - city_start_time
+
+                    print(f"⏱️ {city_name}, {state_name} completed in {city_duration:.1f} seconds")
+                    print(f"📊 Running totals: {total_scraped_businesses} businesses from {city_global_index} cities")
+
+                    # Save progress after each city (optional - can be removed for performance)
+                    if city_scraped_count > 0:
+                        try:
+                            master_business_list.save_to_csv(f"all_usa_sod_farms_citywise_progress")
+                            print(f"💾 Progress saved")
+                        except Exception as e:
+                            print(f"⚠️ Error saving progress: {e}")
+
+                    # Add small delay between cities to be respectful
+                    if city_index < len(cities) - 1:
+                        print(f"⏱️ Waiting 5 seconds before next city...")
+                        time.sleep(5)
 
                 state_end_time = time.time()
                 state_duration = state_end_time - state_start_time
-                print(f"⏱️ {state_name} completed in {state_duration:.1f} seconds")
 
-                # Save progress after each state
+                print(f"\n🎉 STATE COMPLETED: {state_name}")
+                print(f"📊 {state_name} Results: {state_scraped_businesses} sod farms from {len(cities)} cities")
+                print(f"⏱️ {state_name} Duration: {state_duration:.1f} seconds ({state_duration/60:.1f} minutes)")
+
+                if len(cities) > 0:
+                    avg_time_per_city = state_duration / len(cities)
+                    print(f"⚡ Average time per city in {state_name}: {avg_time_per_city:.1f} seconds")
+
+                # Save state progress
                 try:
-                    master_business_list.save_to_csv(f"all_usa_sod_farms_progress")
-                    print(f"💾 Progress saved: {len(master_business_list.business_list)} total businesses so far")
+                    timestamp = time.strftime("%Y%m%d_%H%M%S")
+                    master_business_list.save_to_csv(f"sod_farms_{state_name.lower().replace(' ', '_')}_{timestamp}")
+                    print(f"💾 {state_name} data saved")
                 except Exception as e:
-                    print(f"⚠️ Error saving progress: {e}")
+                    print(f"⚠️ Error saving {state_name} data: {e}")
 
                 # Add delay between states
-                if state_index < len(states_to_scrape) - 1:
-                    print(f"⏱️ Waiting 10 seconds before next state...")
-                    time.sleep(10)
+                if state_index < total_states:
+                    print(f"⏱️ Waiting 15 seconds before next state...")
+                    time.sleep(15)
 
             end_time = time.time()
             total_duration = end_time - start_time
 
-            print(f"\n🎉 SCRAPING COMPLETED!")
-            print(f"📊 Total sod farms scraped from all states: {len(master_business_list.business_list)}")
+            print(f"\n🎉🎉🎉 CITY-WISE SCRAPING COMPLETED! 🎉🎉🎉")
+            print(f"{'='*80}")
+            print(f"📊 FINAL STATISTICS:")
+            print(f"🏛️ States processed: {total_states}")
+            print(f"🏙️ Cities processed: {total_cities}")
+            print(f"🏢 Total sod farms scraped: {total_scraped_businesses}")
             print(f"⏱️ Total time: {total_duration:.1f} seconds ({total_duration/60:.1f} minutes)")
 
-            if len(states_to_scrape) > 0:
-                avg_time_per_state = total_duration / len(states_to_scrape)
-                print(f"⚡ Average time per state: {avg_time_per_state:.1f} seconds")
+            if total_cities > 0:
+                avg_time_per_city = total_duration / total_cities
+                print(f"⚡ Average time per city: {avg_time_per_city:.1f} seconds")
+
+            if total_scraped_businesses > 0 and total_cities > 0:
+                avg_businesses_per_city = total_scraped_businesses / total_cities
+                print(f"📈 Average sod farms per city: {avg_businesses_per_city:.1f}")
+
+            # Check for duplicates in final data
+            unique_urls_in_data = set()
+            duplicates_found = 0
+            for business in master_business_list.business_list:
+                if business.google_maps_url in unique_urls_in_data:
+                    duplicates_found += 1
+                else:
+                    unique_urls_in_data.add(business.google_maps_url)
+
+            if duplicates_found > 0:
+                print(f"⚠️ Warning: {duplicates_found} duplicate businesses found in final data")
+            else:
+                print(f"✅ No duplicates found in final data")
+
+            print(f"{'='*80}")
 
             #########
             # final output
             #########
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            master_business_list.save_to_excel(f"all_usa_sod_farms_complete_{timestamp}")
-            master_business_list.save_to_csv(f"all_usa_sod_farms_complete_{timestamp}")
+            final_filename_base = f"all_usa_sod_farms_citywise_complete_{timestamp}"
 
-            print(f"💾 Final files saved:")
-            print(f"   - all_usa_sod_farms_complete_{timestamp}.xlsx")
-            print(f"   - all_usa_sod_farms_complete_{timestamp}.csv")
+            master_business_list.save_to_excel(final_filename_base)
+            master_business_list.save_to_csv(final_filename_base)
+
+            print(f"💾 FINAL FILES SAVED:")
+            print(f"   📄 {final_filename_base}.xlsx")
+            print(f"   📄 {final_filename_base}.csv")
+            print(f"📁 Location: ./output/ directory")
 
         browser.close()
 
